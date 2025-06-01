@@ -35,7 +35,7 @@ impl std::fmt::Display for CargoSubcommand {
 }
 
 pub fn parent_command() -> Result<String> {
-    let ppid = parent_id();
+    let ppid = parent_id()?;
     let mut command = Command::new("ps");
     command.args(["-p", &ppid.to_string(), "-o", "args="]);
     let output = command.output()?;
@@ -52,8 +52,33 @@ pub fn parent_command() -> Result<String> {
 }
 
 #[cfg(unix)]
-fn parent_id() -> u32 {
-    std::os::unix::process::parent_id()
+#[expect(clippy::unnecessary_wraps)]
+fn parent_id() -> Result<u32> {
+    Ok(std::os::unix::process::parent_id())
+}
+
+// smoelius: Based on:
+// https://stackoverflow.com/questions/7486717/finding-parent-process-id-on-windows
+// #[cfg(windows)]
+fn parent_id() -> Result<u32> {
+    use anyhow::Context;
+    use std::process::id;
+    let mut command = Command::new("wmic");
+    command.args([
+        "process",
+        "where",
+        &format!("(processid={})", id()),
+        "get",
+        "parentprocessid",
+    ]);
+    let output = command.output()?;
+    ensure!(output.status.success(), "command failed: {command:?}");
+    let stdout = String::from_utf8(output.stdout.into_iter().filter(|&c| c != b'\r').collect())?;
+    let Some(line) = stdout.lines().last() else {
+        bail!("unexpected output format: {stdout:?}");
+    };
+    str::parse::<u32>(line.trim_end())
+        .with_context(|| format!("failed to parse parent id: {line:?}"))
 }
 
 #[expect(clippy::similar_names)]
